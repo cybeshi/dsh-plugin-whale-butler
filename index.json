@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "title": { "en": "Whale Butler", "zh": "鲸娘管家" },
+  "plugins": [
+    {
+      "name": "dsh-plugin-whale-butler",
+      "title": { "en": "Whale Butler", "zh": "鲸娘管家" },
+      "description": {
+        "en": "A local-first ledger for DSH. Record an expense or income from one sentence or a screenshot, with accounts, categories, refunds, installments, loans, debts and offline HTML charts. Data stays in local JSONL files.",
+        "zh": "说人话就能记的本地账本。一句话或一张截图记一笔收支，支持账户、类别、退款、分期、债权、债务和离线 HTML 图表；账本存在本地 JSONL 文件里。"
+      },
+      "icon": "icons/whale-butler.png",
+      "author": "cybeshi",
+      "homepage": "https://github.com/cybeshi/dsh-plugin-whale-butler",
+      "repository": {
+        "url": "https://github.com/cybeshi/dsh-plugin-whale-butler"
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "publishTimestamp": 1794251960,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/cybeshi/dsh-plugin-whale-butler",
+            "commit": "a1a41f56947884c44a4b3a48ebdb020253df7613"
+          },
+          "engines": { "dsh": ">=0.2.0" }
+        }
+      ]
+    }
+  ]
+}

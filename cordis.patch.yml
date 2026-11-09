@@ -1,0 +1,4 @@
+- insert:
+    - id: whale-butler
+      name: dsh-plugin-whale-butler
+      config: {}

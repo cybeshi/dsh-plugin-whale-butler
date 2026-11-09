@@ -1,0 +1,45 @@
+{
+  "name": "dsh-plugin-whale-butler",
+  "version": "1.0.0",
+  "description": "截图或一句话就能记账的本地账本，不用懂会计科目。",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cybeshi/dsh-plugin-whale-butler.git"
+  },
+  "homepage": "https://github.com/cybeshi/dsh-plugin-whale-butler#readme",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "ledger",
+    "bookkeeping",
+    "账本"
+  ],
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.png"
+  },
+  "files": [
+    "index.js",
+    "core/*.js",
+    "tools/*.js",
+    "locale/*.json",
+    "icon.png",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "LICENSE-ASSETS",
+    "ATTRIBUTION.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

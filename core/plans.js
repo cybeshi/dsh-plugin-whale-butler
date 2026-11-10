@@ -5,7 +5,7 @@ import { formatYuan, parseAmountToCents } from './money.js';
 import { findCategory } from './categories.js';
 import { ensureChildAccount } from './accounts.js';
 import { buildVoucher, postVoucher, todayInShanghai } from './ledger.js';
-import { addMonths } from './dates.js';
+import { addDays, addMonths } from './dates.js';
 
 function normalizePeriods(value) {
   const periods = Number(value);
@@ -34,6 +34,72 @@ function periodDate(plan, period) {
   const targetDay = plan.amortizationDay || day;
   return dateWithDay(`${targetYear}-${String(targetMonth).padStart(2, '0')}-01`, targetDay);
 }
+
+// ---- 按天 / 按周期的待摊排期（I-056）----
+
+function monthEndOf(date) {
+  const [year, month] = String(date).split('-').map(Number);
+  return `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth(year, month)).padStart(2, '0')}`;
+}
+
+function addMonthsClamped(date, months) {
+  const [year, month, day] = String(date).split('-').map(Number);
+  const total = year * 12 + (month - 1) + months;
+  const targetYear = Math.floor(total / 12);
+  const targetMonth = (total % 12) + 1;
+  const targetDay = Math.min(day, daysInMonth(targetYear, targetMonth));
+  return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+}
+
+function daysInclusive(from, to) {
+  const [y1, m1, d1] = String(from).split('-').map(Number);
+  const [y2, m2, d2] = String(to).split('-').map(Number);
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000) + 1;
+}
+
+/** 按自然月切：每个自然月一期，金额按覆盖天数分摊，尾差给最后一期。 */
+function buildCalendarSchedule(totalCents, start, end) {
+  const segments = [];
+  let cursor = start;
+  while (cursor <= end) {
+    const segEnd = monthEndOf(cursor) < end ? monthEndOf(cursor) : end;
+    segments.push({ date: segEnd, days: daysInclusive(cursor, segEnd) });
+    cursor = addDays(segEnd, 1);
+  }
+  const totalDays = segments.reduce((sum, item) => sum + item.days, 0);
+  let allocated = 0;
+  return segments.map((item, index) => {
+    const period = index + 1;
+    const last = index === segments.length - 1;
+    const amountCents = last ? totalCents - allocated : Math.floor((totalCents * item.days) / totalDays);
+    allocated += amountCents;
+    return { period, date: item.date, days: item.days, amountCents };
+  });
+}
+
+/** 按账单周期切：每期一个月，金额等分，尾差给最后一期。 */
+function buildCycleSchedule(totalCents, start, end) {
+  const segments = [];
+  let cursor = start;
+  while (cursor <= end) {
+    const nextStart = addMonthsClamped(cursor, 1);
+    const cycleEnd = addDays(nextStart, -1);
+    const cappedEnd = cycleEnd < end ? cycleEnd : end;
+    segments.push({ date: cappedEnd });
+    if (cappedEnd >= end) break;
+    cursor = nextStart;
+  }
+  const perPeriod = Math.floor(totalCents / segments.length);
+  let allocated = 0;
+  return segments.map((item, index) => {
+    const period = index + 1;
+    const last = index === segments.length - 1;
+    const amountCents = last ? totalCents - allocated : perPeriod;
+    allocated += amountCents;
+    return { period, date: item.date, amountCents };
+  });
+}
+
 
 export function createInstallment(store, options = {}) {
   const name = options.name || '分期';
@@ -140,15 +206,43 @@ export function payInstallment(store, planId, options = {}) {
 export function createPrepaid(store, options = {}) {
   const name = options.name || '待摊';
   const totalCents = parseAmountToCents(options.total);
-  const periods = normalizePeriods(options.periods);
-  const startDate = options.startDate;
-  if (!startDate) throw new Error('待摊要告诉我从哪天开始');
 
   const category = findCategory(store.categories, options.category || '其他支出');
   if (!category) throw new Error(`没找到类别「${options.category || '其他支出'}」`);
   if (category.kind !== 'expense') throw new Error('待摊摊销到的类别要是支出类别');
 
-  const perPeriodCents = Math.floor(totalCents / periods);
+  const coverageStart = options.coverageStart || null;
+  const coverageEnd = options.coverageEnd || null;
+  if (coverageStart && !coverageEnd) throw new Error('给了开始日期，还要告诉我覆盖到哪天');
+  if (coverageEnd && !coverageStart) throw new Error('给了结束日期，还要告诉我从哪天开始');
+  if (coverageStart && coverageEnd && coverageEnd < coverageStart) {
+    throw new Error('结束日期不能早于开始日期');
+  }
+
+  const hasCoverage = Boolean(coverageStart && coverageEnd);
+  const mode = hasCoverage
+    ? options.mode === 'cycle'
+      ? 'cycle'
+      : 'calendar'
+    : 'even';
+
+  let periods;
+  let perPeriodCents;
+  let schedule = null;
+  if (hasCoverage) {
+    schedule =
+      mode === 'cycle'
+        ? buildCycleSchedule(totalCents, coverageStart, coverageEnd)
+        : buildCalendarSchedule(totalCents, coverageStart, coverageEnd);
+    periods = schedule.length;
+    perPeriodCents = schedule[0] ? schedule[0].amountCents : 0;
+  } else {
+    periods = normalizePeriods(options.periods);
+    perPeriodCents = Math.floor(totalCents / periods);
+  }
+
+  const startDate = options.startDate || coverageStart;
+  if (!startDate) throw new Error('待摊要告诉我从哪天开始');
   if (perPeriodCents <= 0) throw new Error('每期金额太小了，鲸鲸算不了');
 
   const asset = ensureChildAccount(store, '待摊费用', `待摊-${name}`);
@@ -162,6 +256,11 @@ export function createPrepaid(store, options = {}) {
     categoryId: category.id,
     categoryName: category.name,
     assetAccountId: asset.id,
+    mode,
+    paidAt: options.paidAt || startDate,
+    coverageStart,
+    coverageEnd,
+    schedule,
     startDate,
     amortizationDay: options.amortizationDay
       ? Number(options.amortizationDay)
@@ -174,7 +273,7 @@ export function createPrepaid(store, options = {}) {
   };
 
   const built = buildVoucher(store, {
-    date: startDate,
+    date: plan.paidAt,
     type: 'prepaid',
     memo: options.memo || `预付${name}`,
     sourceText: options.sourceText,
@@ -201,25 +300,8 @@ export function amortizePrepaid(store, planId, options = {}) {
   const amortized = plan.amortizedPeriods || [];
   const amounts = plan.amortizedAmounts || {};
   const created = [];
-  let remainingCents =
-    plan.totalCents - Object.values(amounts).reduce((sum, amount) => sum + (amount || 0), 0);
 
-  for (let period = 1; period <= plan.periods; period += 1) {
-    if (amortized.includes(period)) continue;
-    const date = periodDate(plan, period);
-    if (date > through) break;
-
-    const override = (plan.overrides || {})[period];
-    let amountCents;
-    if (override && override.amount) {
-      amountCents = parseAmountToCents(override.amount);
-    } else if (period === plan.periods) {
-      amountCents = remainingCents;
-    } else {
-      amountCents = Math.min(plan.perPeriodCents, remainingCents);
-    }
-    if (amountCents <= 0) break;
-
+  const post = (period, date, amountCents) => {
     const built = buildVoucher(store, {
       date,
       type: 'amortization',
@@ -230,14 +312,50 @@ export function amortizePrepaid(store, planId, options = {}) {
       ],
     });
     if (!built.ok) return built;
-
     built.voucher.planId = plan.id;
     built.voucher.period = period;
     postVoucher(store, built.voucher);
     amortized.push(period);
     amounts[period] = amountCents;
-    remainingCents -= amountCents;
     created.push(built.voucher);
+    return null;
+  };
+
+  if (Array.isArray(plan.schedule) && plan.schedule.length) {
+    // 按天 / 按周期排好的计划：日期和金额都已经算好，照单摊销。
+    for (const item of plan.schedule) {
+      if (amortized.includes(item.period)) continue;
+      const override = (plan.overrides || {})[item.period] || {};
+      const date = override.date || item.date;
+      if (date > through) break;
+      const amountCents = override.amount ? parseAmountToCents(override.amount) : item.amountCents;
+      if (amountCents <= 0) continue;
+      const failed = post(item.period, date, amountCents);
+      if (failed) return failed;
+    }
+  } else {
+    let remainingCents =
+      plan.totalCents - Object.values(amounts).reduce((sum, amount) => sum + (amount || 0), 0);
+    for (let period = 1; period <= plan.periods; period += 1) {
+      if (amortized.includes(period)) continue;
+      const date = periodDate(plan, period);
+      if (date > through) break;
+
+      const override = (plan.overrides || {})[period];
+      let amountCents;
+      if (override && override.amount) {
+        amountCents = parseAmountToCents(override.amount);
+      } else if (period === plan.periods) {
+        amountCents = remainingCents;
+      } else {
+        amountCents = Math.min(plan.perPeriodCents, remainingCents);
+      }
+      if (amountCents <= 0) break;
+
+      const failed = post(period, date, amountCents);
+      if (failed) return failed;
+      remainingCents -= amountCents;
+    }
   }
 
   plan.amortizedPeriods = amortized.sort((a, b) => a - b);
@@ -260,6 +378,43 @@ export function amortizeAllPrepaids(store, through = todayInShanghai()) {
 export function updatePrepaid(store, planId, options = {}) {
   const plan = store.plans.find((candidate) => candidate.id === planId && candidate.kind === 'prepaid');
   if (!plan) return { ok: false, errors: [{ code: 'NOT_FOUND', message: `找不到待摊 ${planId}` }] };
+
+  // 按天 / 按周期排好的计划：日期已定，不能中途改期数；只允许改类别，未开始摊销时可改总额。
+  if (Array.isArray(plan.schedule) && plan.schedule.length) {
+    const postedCount = (plan.amortizedPeriods || []).length;
+    if (options.periods !== undefined || options.startDate || options.amortizationDay) {
+      return {
+        ok: false,
+        errors: [{ code: 'SCHEDULED', message: '这个待摊是按覆盖期排好的，不能改期数或起止日；要改就新建一个。' }],
+      };
+    }
+    if (options.total !== undefined && postedCount > 0) {
+      return {
+        ok: false,
+        errors: [{ code: 'POSTED', message: '已经开始摊销了，总金额不能改；只能改类别。' }],
+      };
+    }
+    if (options.category) {
+      const category = findCategory(store.categories, options.category);
+      if (!category || category.kind !== 'expense') {
+        return { ok: false, errors: [{ code: 'CATEGORY', message: `没找到支出类别「${options.category}」` }] };
+      }
+      plan.categoryId = category.id;
+      plan.categoryName = category.name;
+    }
+    if (options.total !== undefined) {
+      plan.totalCents = parseAmountToCents(options.total);
+      plan.schedule =
+        plan.mode === 'cycle'
+          ? buildCycleSchedule(plan.totalCents, plan.coverageStart, plan.coverageEnd)
+          : buildCalendarSchedule(plan.totalCents, plan.coverageStart, plan.coverageEnd);
+      plan.periods = plan.schedule.length;
+      plan.perPeriodCents = plan.schedule[0] ? plan.schedule[0].amountCents : 0;
+    }
+    store.savePlans();
+    store.audit({ action: 'prepaid-update', planId: plan.id, at: new Date().toISOString() });
+    return { ok: true, plan };
+  }
 
   const periods = options.periods !== undefined ? normalizePeriods(options.periods) : plan.periods;
   const postedCount = (plan.amortizedPeriods || []).length;

@@ -17,12 +17,12 @@
       },
       "versions": [
         {
-          "version": "1.0.1",
-          "publishTimestamp": 1794288207,
+          "version": "1.2.0",
+          "publishTimestamp": 1794521411,
           "source": {
             "type": "git",
             "url": "https://github.com/cybeshi/dsh-plugin-whale-butler",
-            "commit": "4df875979d707d572c83ba365fddd19a2f777291"
+            "commit": "d49b3f174b4cf8394b63a9fa4bc92c706c1342ba"
           },
           "engines": { "dsh": ">=0.2.0" }
         }

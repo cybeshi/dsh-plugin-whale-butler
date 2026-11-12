@@ -9,15 +9,18 @@ import { fixVoucher, buildRefundVoucher, buildVoucher, todayInShanghai } from '.
 import { buildCartVoucher } from '../core/cart.js';
 import { postParsedVoucher } from '../core/snap.js';
 import {
+  accountOptionRows,
   accountReferences,
   archiveAccount,
   balanceTargetCents,
   balancesByAccount,
+  changeAccountType,
   createAccount,
   deleteAccount,
   renameAccount,
   resolveAccount,
   setAccountAliases,
+  setAssetClass,
   setInitialBalanceTo,
   suggestAccounts,
   unarchiveAccount,
@@ -94,7 +97,7 @@ export const accountTools = [
   {
     name: 'whale_account',
     description:
-      '鲸娘管家账户操作：加账户、改名/加别名、看账户、按别名找账户、设投资账户、补期初、设默认账户。用户说「建个工行卡」「1234 是哪张」「把建行信用卡2 改名成 1234」时用。改名用 rename，不要手改 accounts.json。补余额时：借记卡问「这笔之后卡里还有多少钱」，信用卡问「这笔之后还欠多少」；信用卡正数会按欠款记成负数。',
+      '鲸娘管家账户操作：加账户、改名/加别名、看账户、按别名找账户、设投资账户、补期初、设默认账户、删除/归档、改借记卡/信用卡类型、生成付款账户选项。问用户从哪个账户付款时，先调 action=options，用返回的结构化名称和金额；不要自己拼名称、尾号或余额。选项标题只写账户名，说明只写金额（如 ¥16003.00、-¥806.07）。',
     parameters: {
       type: 'object',
       properties: {
@@ -104,6 +107,9 @@ export const accountTools = [
             'add',
             'list',
             'find',
+            'options',
+            'change-type',
+            'asset-class',
             'rename',
             'aliases',
             'invest',
@@ -121,7 +127,8 @@ export const accountTools = [
         parent: { type: 'string' },
         aliases: { type: 'array', items: { type: 'string' } },
         tags: { type: 'array', items: { type: 'string' } },
-        credit: { type: 'boolean' },
+        credit: { type: 'boolean', description: 'add 时 true 建信用卡；change-type 时 true 改成信用卡，false 改成借记卡' },
+        assetClass: { type: 'string', description: '资产分类：cash/bank/ewallet/investment/deposit/property/inventory/prepaid/other' },
         excludeAssets: { type: 'boolean' },
         initial: { type: 'string', description: '期初余额' },
         shares: { type: 'string', description: '份额' },
@@ -153,6 +160,7 @@ export const accountTools = [
             name: args.name,
             aliases: args.aliases || [],
             tags,
+            assetClass: args.assetClass || null,
             excludeFromAssets: Boolean(args.excludeAssets),
             initialKnown: false,
             initialBalanceCents: 0,
@@ -180,6 +188,43 @@ export const accountTools = [
             at: new Date().toISOString(),
           });
           return { text: `建好账户「${account.name}」啦～${initialNote}` };
+        }
+        if (action === 'change-type') {
+          if (typeof args.credit !== 'boolean') {
+            return { text: '要说明改成信用卡（credit=true）还是借记卡（credit=false）', error: true };
+          }
+          const account = resolveAccount(store.accounts, args.name);
+          if (!account) return { text: `没找到账户「${args.name}」`, error: true };
+          changeAccountType(store, account, { credit: args.credit });
+          return {
+            text: `「${account.name}」已改成${args.credit ? '信用卡' : '借记卡'}；余额和已有单据没动。${
+              args.credit ? '账单日、还款日、额度可以用 whale_card 继续补。' : ''
+            }`,
+          };
+        }
+        if (action === 'asset-class') {
+          if (!args.assetClass) return { text: '要告诉我资产分类，如 cash/bank/investment/deposit/property/other', error: true };
+          const account = resolveAccount(store.accounts, args.name);
+          if (!account) return { text: `没找到账户「${args.name}」`, error: true };
+          setAssetClass(store, account, args.assetClass);
+          return { text: `「${account.name}」的资产分类已设为 ${args.assetClass}` };
+        }
+        if (action === 'options') {
+          const rows = accountOptionRows(store);
+          const typeText = { credit_card: '信用卡', investment: '投资账户', account: '账户' };
+          return {
+            text: [
+              '付款账户选项（标题用账户名，说明只用金额）：',
+              ...rows.map(
+                (row) =>
+                  `${row.name} ｜ ${typeText[row.type] || row.type} ｜ ${
+                    row.balanceCents < 0 ? '-' : ''
+                  }¥${formatYuan(Math.abs(row.balanceCents))}${
+                    row.aliases.length ? ` ｜ 别名：${row.aliases.join('、')}` : ''
+                  }`,
+              ),
+            ].join('\n'),
+          };
         }
         if (action === 'delete') {
           const account = resolveAccount(store.accounts, args.name);

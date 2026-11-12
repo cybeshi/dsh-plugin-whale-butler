@@ -1,6 +1,6 @@
 // 图表：纯手绘 SVG，零第三方依赖，生成本地 HTML 报表。
 
-import { monthlyReport } from './report.js';
+import { balanceSheet, monthlyReport } from './report.js';
 import { todayInShanghai } from './ledger.js';
 import { sumCents } from './money.js';
 
@@ -45,9 +45,9 @@ function emptySvg(message) {
   )}</text></svg>`;
 }
 
-function pieSvg(items) {
+function pieSvg(items, emptyMessage = '这个月还没有支出，饼图先空着～') {
   const total = sumCents(items.map((item) => item.value));
-  if (!total) return emptySvg('这个月还没有支出，饼图先空着～');
+  if (!total) return emptySvg(emptyMessage);
 
   const width = 470;
   const height = 270;
@@ -173,6 +173,15 @@ export function buildChartHtml(store, options = {}) {
     .slice(0, 10)
     .map((row, index) => ({ label: row.name, value: row.netCents, color: COLORS[index % COLORS.length] }));
 
+  const sheet = balanceSheet(store);
+  const assetItems = sheet.byClass
+    .filter((bucket) => bucket.assetsCents > 0)
+    .map((bucket, index) => ({
+      label: bucket.label,
+      value: bucket.assetsCents,
+      color: COLORS[index % COLORS.length],
+    }));
+
   const barItems = monthly.map((report) => ({ label: report.month.slice(5), value: report.expenseNetCents }));
 
   const totals = new Map();
@@ -258,6 +267,10 @@ export function buildChartHtml(store, options = {}) {
     <section class="card">
       <h2>月度支出（近 ${months} 个月）</h2>
       ${barSvg(barItems)}
+    </section>
+    <section class="card">
+      <h2>资产构成（按大类）</h2>
+      ${pieSvg(assetItems, '还没有资产～')}
     </section>
     <section class="card wide">
       <h2>类目 × 月（堆叠）</h2>

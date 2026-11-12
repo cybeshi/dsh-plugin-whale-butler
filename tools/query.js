@@ -90,7 +90,7 @@ export const queryTools = [
   {
     name: 'whale_query',
     description:
-      '鲸娘管家查询：余额、月报、账户最近流水、信用卡年费进度、理财汇总、债权、分期、待摊、账户列表、类别、库存、经营毛利、商品进价历史。只读，不改账。',
+      '鲸娘管家查询：余额、月报、年度汇总、资产构成、账户最近流水、信用卡年费进度、理财汇总、债权、分期、待摊、账户列表、类别、库存、经营毛利、商品进价历史。只读，不改账。',
     parameters: {
       type: 'object',
       properties: {
@@ -99,6 +99,8 @@ export const queryTools = [
           enum: [
             'balance',
             'month',
+            'annual',
+            'assets',
             'card',
             'invest',
             'loan',
@@ -115,6 +117,7 @@ export const queryTools = [
           ],
         },
         month: { type: 'string', description: 'YYYY-MM' },
+        year: { type: 'string', description: 'annual 用，YYYY' },
         account: { type: 'string', description: '账户名，查流水或年费进度时用' },
         product: { type: 'string', description: '商品名，查进价历史时用' },
         id: { type: 'string', description: '债权号' },
@@ -131,6 +134,38 @@ export const queryTools = [
       const month = (args && args.month) || new Date().toISOString().slice(0, 7);
       if (action === 'balance') return { text: balanceMessage(balanceSheet(store)) };
       if (action === 'month') return { text: monthReportText(store, month) };
+      if (action === 'assets') {
+        const sheet = balanceSheet(store);
+        const lines = ['资产构成（按大类）：'];
+        for (const bucket of sheet.byClass) {
+          lines.push(
+            `  ${bucket.label} ｜ 资产 ${formatYuan(bucket.assetsCents)} ｜ 负债 ${formatYuan(
+              bucket.debtsCents,
+            )} ｜ 净 ${formatYuan(bucket.netCents)}`,
+          );
+        }
+        lines.push(`  合计：资产 ${formatYuan(sheet.assetsCents)} ｜ 负债 ${formatYuan(sheet.debtsCents)} ｜ 净资产 ${formatYuan(sheet.netCents)}`);
+        return { text: lines.join('\n') };
+      }
+      if (action === 'annual') {
+        const year = args.year || month.slice(0, 4);
+        const lines = [`${year} 年汇总：`];
+        let expense = 0;
+        let income = 0;
+        for (let index = 1; index <= 12; index += 1) {
+          const currentMonth = `${year}-${String(index).padStart(2, '0')}`;
+          const report = monthlyReport(store, currentMonth);
+          expense += report.expenseNetCents;
+          income += report.incomeCents;
+          lines.push(
+            `  ${currentMonth} ｜ 支出净 ${formatYuan(report.expenseNetCents)} ｜ 收入 ${formatYuan(
+              report.incomeCents,
+            )} ｜ 净 ${formatYuan(report.netCents)}`,
+          );
+        }
+        lines.push(`  全年：支出净 ${formatYuan(expense)} ｜ 收入 ${formatYuan(income)} ｜ 净 ${formatYuan(income - expense)}`);
+        return { text: lines.join('\n') };
+      }
       if (action === 'accounts') return { text: accountListText(store) };
       if (action === 'categories') return { text: categoryListText(store) };
       if (action === 'account') {
@@ -249,16 +284,21 @@ export const queryTools = [
       }
       if (action === 'prepaids') {
         const plans = store.plans.filter((plan) => plan.kind === 'prepaid');
-        return {
-          text: plans.length
-            ? plans
-                .map(
-                  (plan) =>
-                    `${plan.id} · ${plan.name} · 已摊 ${plan.amortizedPeriods.length}/${plan.periods} 期 · ${plan.status}`,
-                )
-                .join('\n')
-            : '还没有待摊～',
-        };
+        if (!plans.length) return { text: '还没有待摊～' };
+        const lines = plans.map((plan) => {
+          const done = (plan.amortizedPeriods || []).length;
+          let next;
+          if (Array.isArray(plan.schedule) && plan.schedule.length) {
+            const pending = plan.schedule.find((item) => !(plan.amortizedPeriods || []).includes(item.period));
+            next = pending
+              ? ` · 下一期 ${pending.date} ¥${formatYuan(pending.amountCents)}`
+              : ' · 已摊完';
+          } else {
+            next = plan.status === 'done' ? ' · 已摊完' : ` · 剩余每期约 ¥${formatYuan(plan.perPeriodCents)}`;
+          }
+          return `${plan.id} · ${plan.name} · 已摊 ${done}/${plan.periods} 期${next} · ${plan.status}`;
+        });
+        return { text: lines.join('\n') };
       }
       return { text: `不认识的查询：${action}`, error: true };
     },
@@ -266,7 +306,7 @@ export const queryTools = [
   {
     name: 'whale_chart',
     description:
-      '鲸娘管家生成离线 HTML 图表报表：类目饼图、月度柱状、类目×月堆叠。纯手绘 SVG，无第三方库。只有用户明确要求看报表/图表时才调用；记账、改单之后不要自动刷新，也不要主动问要不要刷新。',
+      '鲸娘管家生成离线 HTML 图表报表：类目饼图、月度柱状、类目×月堆叠、资产构成。纯手绘 SVG，无第三方库。只有用户明确要求看报表/图表时才调用；记账、改单之后不要自动刷新，也不要主动问要不要刷新。',
     parameters: {
       type: 'object',
       properties: {

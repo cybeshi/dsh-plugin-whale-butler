@@ -1,6 +1,6 @@
 // 报表：余额表、月度收支（含毛额/退款调整/净额）。
 
-import { balancesByAccount, isGroupAccount } from './accounts.js';
+import { assetClassLabel, balancesByAccount, inferAssetClass, isGroupAccount } from './accounts.js';
 import { sumCents } from './money.js';
 
 export function balanceSheet(store) {
@@ -19,6 +19,7 @@ export function balanceSheet(store) {
       excludeFromAssets: Boolean(account.excludeFromAssets),
       isCreditCard: (account.tags || []).includes('credit_card'),
       isInvestment: (account.tags || []).includes('investment'),
+      assetClass: inferAssetClass(store.accounts, account),
       tags: account.tags || [],
     });
   }
@@ -28,8 +29,24 @@ export function balanceSheet(store) {
   const assetsCents = sumCents(counted.filter((row) => row.balanceCents > 0).map((row) => row.balanceCents));
   const debtsCents = -sumCents(counted.filter((row) => row.balanceCents < 0).map((row) => row.balanceCents));
 
+  const byClassMap = new Map();
+  for (const row of counted) {
+    const key = row.assetClass;
+    if (!byClassMap.has(key)) {
+      byClassMap.set(key, { assetClass: key, label: assetClassLabel(key), assetsCents: 0, debtsCents: 0, count: 0 });
+    }
+    const bucket = byClassMap.get(key);
+    bucket.count += 1;
+    if (row.balanceCents > 0) bucket.assetsCents += row.balanceCents;
+    if (row.balanceCents < 0) bucket.debtsCents += -row.balanceCents;
+  }
+  const byClass = [...byClassMap.values()]
+    .map((bucket) => ({ ...bucket, netCents: bucket.assetsCents - bucket.debtsCents }))
+    .sort((a, b) => Math.abs(b.netCents) - Math.abs(a.netCents));
+
   return {
     rows,
+    byClass,
     assetsCents,
     debtsCents,
     netCents: assetsCents - debtsCents,

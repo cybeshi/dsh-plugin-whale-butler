@@ -90,7 +90,7 @@ export const accountingTools = [
   {
     name: 'whale_expense',
     description:
-      '记一笔日常支出（最常用）。只要金额、类别、付款账户，工具自己拼好借贷方向，不用模型写分录。多件商品、满减券、红包优惠请用 whale_cart。房租、取暖费、学费、住宿费、物业费、保险费、年付宽带这类覆盖一段时期的预付，改用 whale_prepaid，不要记成一次性支出。',
+      '记一笔日常支出（最常用）。只要金额、类别、付款账户，工具自己拼好借贷方向，不用模型写分录。多件商品、满减券、红包优惠请用 whale_cart。房租、取暖费、学费、住宿费、物业费、保险费、年付宽带这类覆盖一段时期的预付，改用 whale_prepaid，不要记成一次性支出。问用户从哪张卡付时，先调 whale_account action=options 拿真实账户选项，不要自己拼账户名、尾号或余额。所有金额写成带货币符号和千分位的形式：¥16,003.00、-¥6,318.52。',
     parameters: {
       type: 'object',
       properties: {
@@ -182,7 +182,7 @@ export const accountingTools = [
   {
     name: 'whale_record',
     description:
-      '鲸娘管家记一笔账（通用版）。模型先把用户的话解析成单据再调用。方向别写反：支出类别在借（debit）、付款账户在贷（credit）；收入反过来（账户借、收入类别贷）。例：买菜 11.5，红包 5，卡 6.5 → 借 食品 11.5；贷 红包 5；贷 建行卡 6.5。日常简单支出/收入优先用 whale_expense、whale_income；覆盖一段时期的预付（房租/取暖/学费/保险等）用 whale_prepaid。',
+      '鲸娘管家记一笔账（通用版）。模型先把用户的话解析成单据再调用。方向别写反：支出类别在借（debit）、付款账户在贷（credit）；收入反过来（账户借、收入类别贷）。例：买菜 11.5，红包 5，卡 6.5 → 借 食品 11.5；贷 红包 5；贷 建行卡 6.5。日常简单支出/收入优先用 whale_expense、whale_income；覆盖一段时期的预付（房租/取暖/学费/保险等）用 whale_prepaid。所有金额写成带货币符号和千分位的形式：¥16,003.00、-¥6,318.52。',
     parameters: voucherSpecSchema,
     output: textOutput(),
     async execute(args, exec) {

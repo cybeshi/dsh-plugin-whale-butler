@@ -202,6 +202,14 @@ export function monthReportText(store, month) {
   return lines.join('\n');
 }
 
+/** 金额统一写法：带货币符号和千分位，如 ¥16,003.00、-¥6,318.52。 */
+export function formatMoneyText(cents) {
+  const sign = cents < 0 ? '-' : '';
+  const [whole, fraction] = formatYuan(Math.abs(cents)).split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${sign}¥${grouped}${fraction === undefined ? '' : `.${fraction}`}`;
+}
+
 export function accountListText(store) {
   const sheet = balanceSheet(store);
   if (!sheet.rows.length) return '还没有账户～先加一个，比如 工行借记卡。';
@@ -214,7 +222,7 @@ export function accountListText(store) {
         : row.initialKnown || row.isInvestment
           ? ''
           : '（期初未告知）';
-    lines.push(`${row.name} ${formatYuan(row.balanceCents)}${note}`);
+    lines.push(`${row.name} ${formatMoneyText(row.balanceCents)}${note}`);
   }
   lines.push(`资产 ${formatYuan(sheet.assetsCents)} ｜ 欠款 ${formatYuan(sheet.debtsCents)} ｜ 净资产 ${formatYuan(sheet.netCents)}`);
   return lines.join('\n');

@@ -17,6 +17,17 @@ export function sanitizeAliases(aliases = []) {
   ];
 }
 
+/** 只返回“当前唯一有效”的别名；两个账户共用的通用别名不生效。 */
+export function effectiveAliases(accounts, account) {
+  return [...new Set(account.aliases || [])].filter((alias) => {
+    if (!alias || alias === account.name) return false;
+    const matches = accounts.filter(
+      (candidate) => candidate.name === alias || (candidate.aliases || []).includes(alias),
+    );
+    return matches.length === 1 && matches[0].id === account.id;
+  });
+}
+
 export function resolveAccount(accounts, key) {
   if (key === null || key === undefined || key === '') return null;
 
@@ -24,7 +35,7 @@ export function resolveAccount(accounts, key) {
   if (byId) return byId;
 
   const matches = accounts.filter(
-    (account) => account.name === key || (account.aliases || []).includes(key),
+    (account) => account.name === key || effectiveAliases(accounts, account).includes(key),
   );
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) {
@@ -33,8 +44,114 @@ export function resolveAccount(accounts, key) {
   return null;
 }
 
+/** 给提问用的结构化付款账户选项：名称、类型、余额、有效别名。 */
+export function accountOptionRows(store) {
+  const balances = balancesByAccount(store.accounts, store.vouchers());
+  return store.accounts
+    .filter((account) => isPaymentAccount(store.accounts, account))
+    .map((account) => {
+      const tags = account.tags || [];
+      return {
+        id: account.id,
+        name: account.name,
+        type: tags.includes('credit_card')
+          ? 'credit_card'
+          : tags.includes('investment')
+            ? 'investment'
+            : 'account',
+        balanceCents: balances.get(account.id) || 0,
+        aliases: effectiveAliases(store.accounts, account),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+}
+
 export function isGroupAccount(accounts, account) {
   return accounts.some((candidate) => candidate.parentId === account.id);
+}
+
+const NON_PAYMENT_GROUPS = new Set(['待摊费用', '库存商品', '红包券', '往来', '应付款', '债权', '债务']);
+const NON_PAYMENT_NAMES = new Set(['库存商品', '红包券']);
+
+/** 能不能作为「从哪个账户付款」的候选：排除组、待摊/库存/红包券/往来/投资等。 */
+const ASSET_CLASS_LABELS = {
+  cash: '现金',
+  bank: '银行',
+  ewallet: '电子钱包',
+  investment: '投资',
+  deposit: '定期/存款',
+  property: '房产',
+  inventory: '库存',
+  prepaid: '待摊',
+  receivable: '应收',
+  payable: '应付',
+  credit: '信用卡',
+  other: '其他',
+};
+
+export function assetClassLabel(value) {
+  return ASSET_CLASS_LABELS[value] || ASSET_CLASS_LABELS.other;
+}
+
+export function inferAssetClass(accounts, account) {
+  if (account.assetClass) return account.assetClass;
+  const tags = account.tags || [];
+  const name = account.name || '';
+  if (tags.includes('credit_card')) return 'credit';
+  if (tags.includes('investment')) return 'investment';
+  if (/定期|存款/.test(name)) return 'deposit';
+  if (/现金/.test(name)) return 'cash';
+  if (/支付宝|微信|余额宝|零钱/.test(name)) return 'ewallet';
+  if (/待摊/.test(name)) return 'prepaid';
+  if (/房|地产/.test(name)) return 'property';
+  if (/库存/.test(name)) return 'inventory';
+  if (/银行|卡/.test(name)) return 'bank';
+  return 'other';
+}
+
+/** 设置账户资产分类；只影响报表归类，不动余额。 */
+export function setAssetClass(store, account, value) {
+  if (!value || typeof value !== 'string') throw new Error('资产分类要是字符串');
+  account.assetClass = value;
+  store.saveAccounts();
+  store.audit({ action: 'set-asset-class', accountId: account.id, assetClass: value, at: new Date().toISOString() });
+  return account;
+}
+
+/** 能不能作为「从哪个账户付款」的候选：排除组、待摊/库存/红包券/往来/投资等。 */
+export function isPaymentAccount(accounts, account) {
+  if (account.archived || isGroupAccount(accounts, account)) return false;
+  if (account.paymentEligible === false) return false;
+  if ((account.tags || []).includes('investment')) return false;
+  if (NON_PAYMENT_NAMES.has(account.name) || /^待摊-/.test(account.name)) return false;
+  const parent = account.parentId ? accounts.find((candidate) => candidate.id === account.parentId) : null;
+  if (parent && NON_PAYMENT_GROUPS.has(parent.name)) return false;
+  return true;
+}
+
+/** 借记卡 ↔ 信用卡：只改类型标签和信用卡资料，不动余额和历史。 */
+export function changeAccountType(store, account, options = {}) {
+  if (typeof options.credit !== 'boolean') throw new Error('要说明是信用卡还是借记卡');
+  const tags = new Set(account.tags || []);
+  if (options.credit) {
+    tags.add('credit_card');
+  } else {
+    tags.delete('credit_card');
+    if (account.meta && account.meta.credit_card) {
+      const meta = { ...account.meta };
+      delete meta.credit_card;
+      account.meta = meta;
+    }
+  }
+  account.tags = [...tags];
+  store.saveAccounts();
+  store.audit({
+    action: 'change-account-type',
+    accountId: account.id,
+    credit: options.credit,
+    at: new Date().toISOString(),
+  });
+  return account;
 }
 
 export function accountFlowsCents(accountId, vouchers) {
@@ -125,6 +242,7 @@ export function createAccount(accounts, options = {}) {
     initialBalanceCents = 0,
     initialKnown = false,
     excludeFromAssets = false,
+    assetClass = null,
   } = options;
 
   if (!name) throw new Error('账户要有名字');
@@ -144,6 +262,7 @@ export function createAccount(accounts, options = {}) {
     initialBalanceCents,
     initialKnown,
     excludeFromAssets,
+    assetClass,
     archived: false,
     createdAt: new Date().toISOString(),
   };
